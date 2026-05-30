@@ -1,18 +1,32 @@
 "use client";
 
-import Image from "next/image";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { deleteDoc, doc, getDoc } from "firebase/firestore";
 import { db } from "@/lib/firebase";
-import { deleteCloudinaryImage, getCloudinaryImageUrl } from "@/lib/cloudinary";
-import { useAdminSession } from "@/lib/useAdminSession";
+import { deleteCloudinaryImage } from "@/lib/cloudinary";
+import {
+  isPublicPlant,
+  normalizeMicroscopicImages,
+  normalizePlant,
+  normalizeStringArray,
+  PLANT_STATUS,
+} from "@/lib/plants";
+import { useAuth } from "@/components/AuthProvider";
+import { ContributionDetailsCard } from "@/components/plants/ContributionDetailsCard";
+import { MedicinalPropertiesBadges } from "@/components/plants/MedicinalPropertiesBadges";
+import { MicroscopicGallery } from "@/components/plants/MicroscopicGallery";
+import { PlantTags } from "@/components/plants/PlantTags";
+import { PlantWorkflowActions } from "@/components/plants/PlantWorkflowActions";
+import { ScientificClassificationCard } from "@/components/plants/ScientificClassificationCard";
+import { SpecimenImageViewer } from "@/components/plants/SpecimenImageViewer";
+import { SpecimenRecordCard } from "@/components/plants/SpecimenRecordCard";
 
 export default function PlantDetailPage() {
   const params = useParams();
   const router = useRouter();
-  const { isAdmin } = useAdminSession();
+  const { user, isAdmin, isReviewer } = useAuth();
   const id = typeof params?.id === "string" ? params.id : params?.id?.[0];
   const [plant, setPlant] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -34,11 +48,11 @@ export default function PlantDetailPage() {
           setPlant(null);
           setError("This specimen was not found.");
         } else {
-          setPlant({ id: snap.id, ...snap.data() });
+          setPlant(normalizePlant({ id: snap.id, ...snap.data() }));
         }
       } catch (e) {
         console.error(e);
-        if (!cancelled) setError("Could not load this plant. Check your connection and Firestore rules.");
+        if (!cancelled) setError("Could not load this plant. You may not have permission to view it.");
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -50,39 +64,52 @@ export default function PlantDetailPage() {
     };
   }, [id]);
 
+  useEffect(() => {
+    if (!plant || loading) return;
+    if (!isPublicPlant(plant) && !user && !isReviewer) {
+      router.replace("/login?returnTo=/plants/" + id);
+    }
+  }, [plant, loading, user, isReviewer, router, id]);
+
   async function handleDelete() {
     if (!plant?.id) return;
 
     const label = plant.plantName || "this plant";
-    const ok = window.confirm(
-      `Remove "${label}" from the herbarium?\n\nThis will delete the Firestore record. If Cloudinary is configured on the server, the image file will be removed too.`,
-    );
+    const ok = window.confirm(`Remove "${label}" permanently?`);
     if (!ok) return;
 
     setDeleting(true);
     try {
       await deleteDoc(doc(db, "plants", plant.id));
 
-      if (plant.imagePublicId) {
-        await deleteCloudinaryImage(plant.imagePublicId);
+      if (plant.imagePublicId) await deleteCloudinaryImage(plant.imagePublicId);
+      for (const img of plant.microscopicImages ?? []) {
+        if (img.publicId) await deleteCloudinaryImage(img.publicId);
       }
 
-      router.push("/");
+      router.push(plant.status === PLANT_STATUS.APPROVED ? "/" : "/my-drafts");
     } catch (e) {
       console.error(e);
-      window.alert("Could not delete this plant. Check Firestore security rules and try again.");
+      window.alert("Could not delete this record.");
       setDeleting(false);
     }
   }
 
+  const hasClassification =
+    plant &&
+    (Object.values(plant.scientificClassification ?? {}).some(Boolean) || plant.family);
+  const hasMedicinal = plant && normalizeStringArray(plant.medicinalProperties).length > 0;
+  const hasTags = plant && normalizeStringArray(plant.tags).length > 0;
+  const hasMicroscopic = plant && normalizeMicroscopicImages(plant.microscopicImages).length > 0;
+
   return (
     <div className="min-h-screen bg-gradient-to-b from-emerald-50 via-white to-white">
-      <div className="mx-auto max-w-5xl px-4 py-8 sm:px-6 lg:px-8">
+      <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
         <Link
-          href="/"
+          href={isPublicPlant(plant ?? {}) ? "/" : "/my-drafts"}
           className="mb-8 inline-flex items-center gap-2 rounded-2xl border border-emerald-200 bg-white px-4 py-2 text-sm font-semibold text-emerald-900 shadow-sm transition hover:bg-emerald-50"
         >
-          ← Back to Home
+          ← Back
         </Link>
 
         {loading && (
@@ -96,86 +123,75 @@ export default function PlantDetailPage() {
         )}
 
         {!loading && plant && (
-          <article className="overflow-hidden rounded-3xl border border-emerald-100/80 bg-white shadow-md">
-            <div className="grid gap-0 lg:grid-cols-2 lg:items-start">
-              <div className="relative aspect-[4/3] w-full self-start overflow-hidden bg-emerald-100">
-                {plant.imageUrl ? (
-                  <Image
-                    src={getCloudinaryImageUrl(plant.imageUrl, "w_1200,c_limit,q_auto")}
-                    alt={plant.plantName || "Plant specimen"}
-                    fill
-                    priority
-                    sizes="(max-width: 1024px) 100vw, 50vw"
-                    className="object-contain"
-                  />
-                ) : (
-                  <div className="flex h-full items-center justify-center text-emerald-700">
-                    No image on file
-                  </div>
-                )}
-              </div>
+          <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_320px] lg:items-start xl:grid-cols-[minmax(0,1.15fr)_340px]">
+            <article className="min-w-0 space-y-6">
+              <SpecimenImageViewer
+                imageUrl={plant.imageUrl}
+                alt={plant.plantName || "Plant specimen"}
+              />
 
-              <div className="flex flex-col justify-center gap-6 p-8 sm:p-10">
-                <header>
-                  <p className="text-xs font-semibold uppercase tracking-[0.2em] text-emerald-600">
-                    Specimen record
-                  </p>
-                  <h1 className="mt-2 text-3xl font-bold tracking-tight text-emerald-950 sm:text-4xl">
-                    {plant.plantName || "Untitled"}
-                  </h1>
-                  <p className="mt-2 text-xl italic text-emerald-800">
-                    {plant.scientificName || "—"}
-                  </p>
-                </header>
-
-                <dl className="grid gap-4 text-sm sm:grid-cols-2">
-                  <Detail label="Family" value={plant.family} />
-                  <Detail label="Location" value={plant.location} />
-                  <Detail label="Collector" value={plant.collector} />
-                  <Detail label="Date" value={plant.date} />
-                </dl>
-
-                <section>
-                  <h2 className="text-sm font-semibold uppercase tracking-wide text-emerald-700">
-                    Description
-                  </h2>
-                  <p className="mt-3 whitespace-pre-wrap rounded-2xl border border-emerald-100 bg-emerald-50/60 p-4 text-base leading-relaxed text-emerald-950">
+              <div className={["grid gap-6", hasClassification ? "lg:grid-cols-2" : ""].join(" ")}>
+                <section className="rounded-3xl border border-emerald-100/80 bg-white p-6 shadow-sm sm:p-7">
+                  <header className="mb-4">
+                    <p className="text-xs font-semibold uppercase tracking-[0.2em] text-emerald-600">
+                      Notes
+                    </p>
+                    <h2 className="mt-1 text-xl font-bold text-emerald-950">Description</h2>
+                  </header>
+                  <p className="whitespace-pre-wrap text-base leading-relaxed text-emerald-950">
                     {plant.description?.trim() || "No description provided."}
                   </p>
                 </section>
 
-                {isAdmin ? (
-                  <section className="flex flex-wrap gap-3 pt-1">
-                    <Link
-                      href={`/plants/${plant.id}/edit`}
-                      className="rounded-xl border border-emerald-300 bg-emerald-50 px-4 py-2.5 text-sm font-semibold text-emerald-900 transition hover:bg-emerald-100"
-                    >
-                      Edit
-                    </Link>
-                    <button
-                      type="button"
-                      onClick={handleDelete}
-                      disabled={deleting}
-                      className="rounded-xl border border-red-200 bg-red-50 px-4 py-2.5 text-sm font-semibold text-red-800 transition hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60"
-                    >
-                      {deleting ? "Deleting…" : "Delete"}
-                    </button>
-                  </section>
+                {hasClassification ? (
+                  <ScientificClassificationCard
+                    classification={plant.scientificClassification}
+                    fallbackFamily={plant.family}
+                    compact
+                  />
                 ) : null}
               </div>
-            </div>
-          </article>
+
+              {hasMedicinal ? (
+                <section className="rounded-3xl border border-emerald-100/80 bg-white p-6 shadow-sm sm:p-7">
+                  <MedicinalPropertiesBadges properties={plant.medicinalProperties} />
+                </section>
+              ) : null}
+
+              {hasTags ? (
+                <section className="rounded-3xl border border-emerald-100/80 bg-white p-6 shadow-sm sm:p-7">
+                  <PlantTags tags={plant.tags} />
+                </section>
+              ) : null}
+
+              {hasMicroscopic ? (
+                <section className="rounded-3xl border border-emerald-100/80 bg-white p-6 shadow-sm sm:p-7">
+                  <MicroscopicGallery images={plant.microscopicImages} />
+                </section>
+              ) : null}
+
+              <div className="lg:hidden">
+                <ContributionDetailsCard plant={plant} />
+              </div>
+            </article>
+
+            <aside className="space-y-6 lg:sticky lg:top-24">
+              <SpecimenRecordCard plant={plant} />
+              <div className="hidden lg:block">
+                <ContributionDetailsCard plant={plant} />
+              </div>
+              <PlantWorkflowActions
+                plant={plant}
+                userId={user?.uid}
+                isAdmin={isAdmin}
+                isReviewer={isReviewer}
+                deleting={deleting}
+                onDelete={handleDelete}
+              />
+            </aside>
+          </div>
         )}
       </div>
-    </div>
-  );
-}
-
-function Detail({ label, value }) {
-  return (
-    <div className="rounded-2xl border border-emerald-100 bg-emerald-50/40 px-4 py-3">
-      <dt className="text-xs font-semibold uppercase tracking-wide text-emerald-600">{label}</dt>
-      <dd className="mt-1 font-medium text-emerald-950">{value?.toString()?.trim() || "—"}</dd>
     </div>
   );
 }

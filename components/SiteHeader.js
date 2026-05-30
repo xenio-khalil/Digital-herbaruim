@@ -4,7 +4,8 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { PlantLogo } from "@/components/PlantLogo";
-import { useAdminSession } from "@/lib/useAdminSession";
+import { UserMenu } from "@/components/auth/UserMenu";
+import { useAuth } from "@/components/AuthProvider";
 
 const LINKS = [
   { href: "/", label: "Home", match: (p) => p === "/" || p.startsWith("/plants/") },
@@ -23,17 +24,26 @@ function linkClass(active) {
 export function SiteHeader() {
   const pathname = usePathname();
   const [menuOpen, setMenuOpen] = useState(false);
-  const { isAdmin } = useAdminSession();
-  const navigationLinks = isAdmin
-    ? [
-        ...LINKS,
-        {
-          href: "/upload",
-          label: "Upload",
-          match: (p) => p === "/upload" || p.startsWith("/upload/"),
-        },
-      ]
-    : LINKS;
+  const { isSignedIn, isAdmin, isReviewer } = useAuth();
+
+  const navigationLinks = [
+    ...LINKS,
+    ...(isSignedIn
+      ? [
+          { href: "/my-drafts", label: "My drafts", match: (p) => p.startsWith("/my-drafts") || p === "/submit" },
+          { href: "/submit", label: "Submit", match: (p) => p === "/submit" },
+        ]
+      : []),
+    ...(isAdmin
+      ? [
+          { href: "/upload", label: "Official upload", match: (p) => p === "/upload" || p.startsWith("/upload/") },
+          { href: "/admin/users", label: "Users", match: (p) => p.startsWith("/admin/") },
+        ]
+      : []),
+    ...(isReviewer
+      ? [{ href: "/review", label: "Review", match: (p) => p.startsWith("/review") }]
+      : []),
+  ];
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -47,7 +57,7 @@ export function SiteHeader() {
   const close = () => setMenuOpen(false);
 
   return (
-    <div className="mx-auto max-w-6xl px-4 py-3 sm:px-6 lg:px-8">
+    <div className="mx-auto max-w-7xl px-4 py-3 sm:px-6 lg:px-8">
       <div className="flex items-center justify-between gap-3">
         <Link
           href="/"
@@ -60,6 +70,9 @@ export function SiteHeader() {
         </Link>
 
         <div className="flex shrink-0 items-center gap-2">
+          <div className="hidden md:block">
+            <UserMenu />
+          </div>
           <button
             type="button"
             className="inline-flex h-11 w-11 items-center justify-center rounded-xl border border-emerald-200/80 bg-white text-emerald-900 shadow-sm transition hover:bg-emerald-50 md:hidden"
@@ -105,6 +118,9 @@ export function SiteHeader() {
             {label}
           </Link>
         ))}
+        <div className="mt-2 border-t border-emerald-100 pt-2 md:hidden">
+          <UserMenu />
+        </div>
       </nav>
     </div>
   );

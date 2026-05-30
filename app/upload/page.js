@@ -5,21 +5,17 @@ import { useState } from "react";
 import { addDoc, collection, serverTimestamp } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { uploadImageToCloudinary } from "@/lib/cloudinary";
-import { useAdminSession } from "@/lib/useAdminSession";
-
-const empty = {
-  plantName: "",
-  scientificName: "",
-  family: "",
-  location: "",
-  collector: "",
-  date: "",
-  description: "",
-};
+import { buildPlantDocument, EMPTY_PLANT_FORM, PLANT_STATUS } from "@/lib/plants";
+import { useAuth } from "@/components/AuthProvider";
+import { VERIFICATION_STATUS } from "@/lib/verification";
+import { DynamicStringList } from "@/components/forms/DynamicStringList";
+import { Field } from "@/components/forms/Field";
+import { MicroscopicImagesManager } from "@/components/forms/MicroscopicImagesManager";
+import { ScientificClassificationFields } from "@/components/forms/ScientificClassificationFields";
 
 export default function UploadPage() {
-  const { isAdmin } = useAdminSession();
-  const [form, setForm] = useState(empty);
+  const { isAdmin, profile } = useAuth();
+  const [form, setForm] = useState({ ...EMPTY_PLANT_FORM });
   const [file, setFile] = useState(null);
   const [busy, setBusy] = useState(false);
   const [ok, setOk] = useState("");
@@ -30,37 +26,42 @@ export default function UploadPage() {
     setForm((prev) => ({ ...prev, [name]: value }));
   }
 
+  function onClassificationChange(key, value) {
+    setForm((prev) => ({
+      ...prev,
+      scientificClassification: { ...prev.scientificClassification, [key]: value },
+    }));
+  }
+
   async function onSubmit(e) {
     e.preventDefault();
     setOk("");
     setErr("");
 
     if (!file) {
-      setErr("Please choose an image to upload.");
+      setErr("Please choose a specimen image to upload.");
       return;
     }
 
     setBusy(true);
     try {
       const { secureUrl, publicId } = await uploadImageToCloudinary(file);
+      const payload = buildPlantDocument({ ...form, imageUrl: secureUrl, imagePublicId: publicId });
 
       await addDoc(collection(db, "plants"), {
-        plantName: form.plantName.trim(),
-        scientificName: form.scientificName.trim(),
-        family: form.family.trim(),
-        location: form.location.trim(),
-        collector: form.collector.trim(),
-        date: form.date,
-        description: form.description.trim(),
-        imageUrl: secureUrl,
-        imagePublicId: publicId,
+        ...payload,
+        status: PLANT_STATUS.APPROVED,
+        verificationStatus: VERIFICATION_STATUS.OFFICIAL,
+        approvedBy: profile?.displayName || profile?.email || "Administrator",
+        approvedAt: serverTimestamp(),
         createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
       });
 
-      setForm(empty);
+      setForm({ ...EMPTY_PLANT_FORM });
       setFile(null);
       e.target.reset();
-      setOk("Saved! Your image is on Cloudinary and the details are in Firestore.");
+      setOk("Specimen saved successfully with taxonomy, properties, and microscopy data.");
     } catch (error) {
       console.error(error);
       setErr(error?.message || "Something went wrong. Check Cloudinary preset and Firestore rules.");
@@ -71,15 +72,14 @@ export default function UploadPage() {
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-emerald-50 via-white to-white">
-      <div className="mx-auto max-w-2xl px-4 py-10 sm:px-6 lg:px-8">
+      <div className="mx-auto max-w-3xl px-4 py-10 sm:px-6 lg:px-8">
         {!isAdmin ? (
           <div className="mb-6 rounded-3xl border border-emerald-200 bg-emerald-50/70 p-6 text-emerald-900">
             <p className="text-sm font-semibold uppercase tracking-[0.2em] text-emerald-700">
               Staff area
             </p>
             <p className="mt-2 text-sm leading-relaxed">
-              Staff Login is required to upload new specimens. Use the login page to enter your
-              PIN.
+              Administrator sign-in is required to publish official herbarium records directly.
             </p>
           </div>
         ) : null}
@@ -88,11 +88,9 @@ export default function UploadPage() {
           <p className="text-sm font-semibold uppercase tracking-[0.2em] text-emerald-600">
             Digital Herbarium
           </p>
-          <h1 className="mt-2 text-3xl font-bold text-emerald-950">New specimen</h1>
+          <h1 className="mt-2 font-serif text-3xl font-bold text-emerald-950">Official specimen</h1>
           <p className="mt-2 text-emerald-800/90">
-            Image goes to <strong>Cloudinary</strong>; text and image URL are stored in{" "}
-            <strong>Firestore</strong> (<code className="rounded bg-emerald-100 px-1">plants</code>
-            ).
+            Publish directly to the public herbarium as an official collection record.
           </p>
           <Link
             href="/"
@@ -104,43 +102,84 @@ export default function UploadPage() {
 
         <form
           onSubmit={onSubmit}
-          className="space-y-5 rounded-3xl border border-emerald-100 bg-white p-6 shadow-sm sm:p-8"
+          className="space-y-8 rounded-3xl border border-emerald-100 bg-white p-6 shadow-sm sm:p-8"
         >
-          <Field label="Plant name" name="plantName" value={form.plantName} onChange={onChange} />
-          <Field
-            label="Scientific name"
-            name="scientificName"
-            value={form.scientificName}
-            onChange={onChange}
-          />
-          <Field label="Family" name="family" value={form.family} onChange={onChange} />
-          <Field label="Location" name="location" value={form.location} onChange={onChange} />
-          <Field label="Collector" name="collector" value={form.collector} onChange={onChange} />
-          <Field label="Date" name="date" type="date" value={form.date} onChange={onChange} />
-
-          <label className="block">
-            <span className="mb-2 block text-sm font-semibold text-emerald-950">Description</span>
-            <textarea
-              name="description"
-              value={form.description}
+          <section className="space-y-5">
+            <h2 className="border-b border-emerald-100 pb-2 text-sm font-semibold uppercase tracking-[0.15em] text-emerald-700">
+              Core record
+            </h2>
+            <Field label="Plant name" name="plantName" value={form.plantName} onChange={onChange} />
+            <Field
+              label="Scientific name"
+              name="scientificName"
+              value={form.scientificName}
               onChange={onChange}
-              rows={4}
-              required
-              className="w-full rounded-2xl border border-emerald-200 bg-white px-4 py-3 text-emerald-950 outline-none ring-emerald-600/30 transition focus:ring-2"
-              placeholder="Habitat, organoleptic notes, or study reminders…"
             />
-          </label>
+            <Field label="Family" name="family" value={form.family} onChange={onChange} />
+            <Field label="Location" name="location" value={form.location} onChange={onChange} />
+            <Field label="Collector" name="collector" value={form.collector} onChange={onChange} />
+            <Field label="Date" name="date" type="date" value={form.date} onChange={onChange} />
 
-          <label className="block">
-            <span className="mb-2 block text-sm font-semibold text-emerald-950">Image</span>
-            <input
-              type="file"
-              accept="image/*"
-              required
-              onChange={(ev) => setFile(ev.target.files?.[0] ?? null)}
-              className="block w-full cursor-pointer rounded-2xl border border-emerald-200 bg-white px-4 py-3 text-sm text-emerald-900 file:mr-4 file:cursor-pointer file:rounded-xl file:border-0 file:bg-emerald-700 file:px-4 file:py-2 file:font-semibold file:text-white hover:file:bg-emerald-800"
+            <label className="block">
+              <span className="mb-2 block text-sm font-semibold text-emerald-950">Description</span>
+              <textarea
+                name="description"
+                value={form.description}
+                onChange={onChange}
+                rows={4}
+                required
+                className="w-full rounded-2xl border border-emerald-200 bg-white px-4 py-3 text-emerald-950 outline-none ring-emerald-600/30 transition focus:ring-2"
+                placeholder="Habitat, organoleptic notes, pharmacological observations…"
+              />
+            </label>
+
+            <label className="block">
+              <span className="mb-2 block text-sm font-semibold text-emerald-950">
+                Specimen image
+              </span>
+              <input
+                type="file"
+                accept="image/*"
+                required
+                onChange={(ev) => setFile(ev.target.files?.[0] ?? null)}
+                className="block w-full cursor-pointer rounded-2xl border border-emerald-200 bg-white px-4 py-3 text-sm text-emerald-900 file:mr-4 file:cursor-pointer file:rounded-xl file:border-0 file:bg-emerald-700 file:px-4 file:py-2 file:font-semibold file:text-white hover:file:bg-emerald-800"
+              />
+            </label>
+          </section>
+
+          <section>
+            <ScientificClassificationFields
+              classification={form.scientificClassification}
+              onChange={onClassificationChange}
             />
-          </label>
+          </section>
+
+          <section className="space-y-5">
+            <h2 className="border-b border-emerald-100 pb-2 text-sm font-semibold uppercase tracking-[0.15em] text-emerald-700">
+              Pharmacology & indexing
+            </h2>
+            <DynamicStringList
+              label="Medicinal properties"
+              items={form.medicinalProperties}
+              onChange={(medicinalProperties) => setForm((prev) => ({ ...prev, medicinalProperties }))}
+              placeholder="e.g. Anti-inflammatory"
+              addLabel="Add property"
+            />
+            <DynamicStringList
+              label="Tags"
+              items={form.tags}
+              onChange={(tags) => setForm((prev) => ({ ...prev, tags }))}
+              placeholder="e.g. Medicinal"
+              addLabel="Add tag"
+            />
+          </section>
+
+          <section>
+            <MicroscopicImagesManager
+              images={form.microscopicImages}
+              onChange={(microscopicImages) => setForm((prev) => ({ ...prev, microscopicImages }))}
+            />
+          </section>
 
           {ok ? (
             <p className="rounded-2xl bg-emerald-100 px-4 py-3 text-sm text-emerald-900">{ok}</p>
@@ -150,28 +189,12 @@ export default function UploadPage() {
           <button
             type="submit"
             disabled={busy || !isAdmin}
-            className="w-full rounded-2xl bg-emerald-700 py-3 text-sm font-semibold text-white shadow transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-60"
+            className="w-full rounded-2xl bg-emerald-700 py-3.5 text-sm font-semibold text-white shadow transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-60"
           >
             {busy ? "Uploading & saving…" : "Upload image & save record"}
           </button>
         </form>
       </div>
     </div>
-  );
-}
-
-function Field({ label, name, type = "text", value, onChange }) {
-  return (
-    <label className="block">
-      <span className="mb-2 block text-sm font-semibold text-emerald-950">{label}</span>
-      <input
-        type={type}
-        name={name}
-        value={value}
-        onChange={onChange}
-        required
-        className="w-full rounded-2xl border border-emerald-200 bg-white px-4 py-3 text-emerald-950 outline-none ring-emerald-600/30 transition focus:ring-2"
-      />
-    </label>
   );
 }
