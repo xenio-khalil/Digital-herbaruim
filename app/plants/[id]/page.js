@@ -6,6 +6,7 @@ import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { deleteDoc, doc, getDoc } from "firebase/firestore";
 import { db } from "@/lib/firebase";
+import { deleteCloudinaryImage, getCloudinaryImageUrl } from "@/lib/cloudinary";
 import { useAdminSession } from "@/lib/useAdminSession";
 
 export default function PlantDetailPage() {
@@ -54,13 +55,18 @@ export default function PlantDetailPage() {
 
     const label = plant.plantName || "this plant";
     const ok = window.confirm(
-      `Remove "${label}" from the herbarium?\n\nThis will delete the Firestore record.`,
+      `Remove "${label}" from the herbarium?\n\nThis will delete the Firestore record. If Cloudinary is configured on the server, the image file will be removed too.`,
     );
     if (!ok) return;
 
     setDeleting(true);
     try {
       await deleteDoc(doc(db, "plants", plant.id));
+
+      if (plant.imagePublicId) {
+        await deleteCloudinaryImage(plant.imagePublicId);
+      }
+
       router.push("/");
     } catch (e) {
       console.error(e);
@@ -91,19 +97,19 @@ export default function PlantDetailPage() {
 
         {!loading && plant && (
           <article className="overflow-hidden rounded-3xl border border-emerald-100/80 bg-white shadow-md">
-            <div className="grid gap-0 lg:grid-cols-2">
-              <div className="relative min-h-[280px] bg-emerald-100 lg:min-h-[480px]">
+            <div className="grid gap-0 lg:grid-cols-2 lg:items-start">
+              <div className="relative aspect-[4/3] w-full self-start overflow-hidden bg-emerald-100">
                 {plant.imageUrl ? (
                   <Image
-                    src={plant.imageUrl}
+                    src={getCloudinaryImageUrl(plant.imageUrl, "w_1200,c_limit,q_auto")}
                     alt={plant.plantName || "Plant specimen"}
                     fill
                     priority
                     sizes="(max-width: 1024px) 100vw, 50vw"
-                    className="object-cover"
+                    className="object-contain"
                   />
                 ) : (
-                  <div className="flex h-full min-h-[280px] items-center justify-center text-emerald-700 lg:min-h-[480px]">
+                  <div className="flex h-full items-center justify-center text-emerald-700">
                     No image on file
                   </div>
                 )}

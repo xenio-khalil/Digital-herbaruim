@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { collection, deleteDoc, doc, getDocs, orderBy, query } from "firebase/firestore";
 import { db } from "@/lib/firebase";
+import { deleteCloudinaryImage, getCloudinaryImageUrl } from "@/lib/cloudinary";
 import { useAdminSession } from "@/lib/useAdminSession";
 
 function plantMatchesQuery(plant, q) {
@@ -79,15 +80,7 @@ export default function Home() {
       setPlants((prev) => prev.filter((p) => p.id !== plant.id));
 
       if (plant.imagePublicId) {
-        try {
-          await fetch("/api/cloudinary/delete", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ publicId: plant.imagePublicId }),
-          });
-        } catch {
-          /* image may remain in Cloudinary; record is already gone */
-        }
+        await deleteCloudinaryImage(plant.imagePublicId);
       }
     } catch (e) {
       console.error(e);
@@ -207,7 +200,7 @@ export default function Home() {
                     <div className="relative aspect-[4/3] bg-emerald-100">
                       {plant.imageUrl ? (
                         <Image
-                          src={plant.imageUrl}
+                          src={getCloudinaryImageUrl(plant.imageUrl, "w_600,c_fill,q_auto")}
                           alt={plant.plantName || "Plant"}
                           fill
                           sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 33vw"
